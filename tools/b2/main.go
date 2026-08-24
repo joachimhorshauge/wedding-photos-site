@@ -66,10 +66,11 @@ func main() {
 	dir := fs.String("dir", "content", "local directory of Hugo page resources")
 
 	var (
-		prune   *bool
-		workers *int
-		zipName *string
-		force   *bool
+		prune    *bool
+		workers  *int
+		zipName  *string
+		force    *bool
+		manifest *string
 	)
 	switch cmd {
 	case "pull":
@@ -78,6 +79,7 @@ func main() {
 	case "zip":
 		zipName = fs.String("name", envOr("B2_ZIP_KEY", "album.zip"), "key to upload the archive to (or B2_ZIP_KEY)")
 		force = fs.Bool("force", false, "upload even if the album is unchanged")
+		manifest = fs.String("manifest", "data/album.json", "where to write the album summary Hugo reads")
 	default:
 		usage()
 	}
@@ -100,7 +102,7 @@ func main() {
 	case "pull":
 		err = pull(c, *prefix, *dir, *workers, *prune)
 	case "zip":
-		err = uploadZip(c, *prefix, *dir, *zipName, *force)
+		err = uploadZip(c, *prefix, *dir, *zipName, *manifest, *force)
 	}
 	if err != nil {
 		log.Fatalf("%s: %v", cmd, err)
@@ -442,7 +444,7 @@ func pruneExtras(dir string, keep map[string]bool) error {
 	return err
 }
 
-func uploadZip(c *client, prefix, dir, key string, force bool) error {
+func uploadZip(c *client, prefix, dir, key, manifest string, force bool) error {
 	files, err := c.list(prefix)
 	if err != nil {
 		return err
@@ -460,16 +462,14 @@ func uploadZip(c *client, prefix, dir, key string, force bool) error {
 	sort.Strings(members)
 	want := hex.EncodeToString(h.Sum(nil))
 
-	if !force {
-		existing, err := c.list(key)
-		if err != nil {
-			return err
-		}
-		for _, e := range existing {
-			if e.FileName == key && e.FileInfo[setHashKey] == want {
-				log.Printf("%s is already current (%d photos)", key, len(members))
-				return nil
-			}
+	existing, err := c.list(key)
+	if err != nil {
+		return err
+	}
+	for _, e := range existing {
+		if e.FileName == key && e.FileInfo[setHashKey] == want && !force {
+			log.Printf("%s is already current (%d photos)", key, len(members))
+			return writeManifest(manifest, len(members), e.ContentLength)
 		}
 	}
 
@@ -497,7 +497,39 @@ func uploadZip(c *client, prefix, dir, key string, force bool) error {
 		return err
 	}
 	log.Printf("uploading %s (%d photos, %.0f MB)", key, len(members), float64(size)/1e6)
-	return c.upload(tmp, key, size, sum, map[string]string{setHashKey: want})
+	if err := c.upload(tmp, key, size, sum, map[string]string{setHashKey: want}); err != nil {
+		return err
+	}
+	return writeManifest(manifest, len(members), size)
+}
+
+// writeManifest records what the archive holds so the download button can say
+// how much it is about to hand over.
+func writeManifest(path string, count int, size int64) error {
+	if path == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body, err := json.MarshalIndent(map[string]any{
+		"count":     count,
+		"bytes":     size,
+		"sizeLabel": sizeLabel(size),
+		"updated":   time.Now().UTC().Format(time.RFC3339),
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(body, '\n'), 0o644)
+}
+
+func sizeLabel(size int64) string {
+	const mb = 1 << 20
+	if size >= 1<<30 {
+		return strings.Replace(fmt.Sprintf("%.1f GB", float64(size)/(1<<30)), ".", ",", 1)
+	}
+	return fmt.Sprintf("%d MB", (size+mb/2)/mb)
 }
 
 func addToZip(zw *zip.Writer, name string) error {

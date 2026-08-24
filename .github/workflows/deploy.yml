@@ -1,0 +1,118 @@
+# Builds the gallery and publishes it to GitHub Pages.
+#
+# Photos are never committed: each run mirrors the Backblaze bucket into
+# content/, lets Hugo derive thumbnails from it, and deploys only the
+# derivatives. Both the originals and the generated sizes are cached between
+# runs, so a build that finds nothing new in the bucket does almost no work.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Photos added to the bucket appear on the site at the next build.
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; let a running one finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  HUGO_VERSION: 0.162.1
+  B2_BUCKET: wedding-photos-joachim-sarah
+  B2_PREFIX: photos/
+  B2_ZIP_KEY: album.zip
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: false
+
+      - name: Install Hugo
+        run: |
+          curl -sSL -o hugo.deb \
+            "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
+          sudo dpkg -i hugo.deb
+
+      # Restored before the pull so only new photos are downloaded, and saved
+      # afterwards under a key naming the exact set, so an unchanged album
+      # reuses the existing entry instead of writing a new one.
+      - name: Restore photos
+        uses: actions/cache/restore@v4
+        with:
+          path: content
+          key: photos-
+          restore-keys: photos-
+
+      - name: Restore generated image sizes
+        uses: actions/cache/restore@v4
+        with:
+          path: resources
+          key: hugo-resources-
+          restore-keys: hugo-resources-
+
+      - name: Pull photos from Backblaze
+        env:
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
+        run: go run ./tools/b2 pull
+
+      - name: Identify the album
+        id: album
+        run: |
+          # Names the cache entries after the photo set itself.
+          hash=$(find content -type f -name '*.jpg' -printf '%P %s\n' | sort | sha256sum | cut -c1-16)
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Build the download-everything archive
+        env:
+          B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+          B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
+        run: go run ./tools/b2 zip
+
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      - name: Build site
+        run: hugo --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
+
+      - name: Save photos
+        uses: actions/cache/save@v4
+        with:
+          path: content
+          key: photos-${{ steps.album.outputs.hash }}
+
+      - name: Save generated image sizes
+        uses: actions/cache/save@v4
+        with:
+          path: resources
+          key: hugo-resources-${{ steps.album.outputs.hash }}
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
