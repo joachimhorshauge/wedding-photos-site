@@ -1,6 +1,6 @@
 # Bryllupsbilleder
 
-The finished album from the wedding: 334 photos on one page, in the order they
+The finished album from the wedding: every photo on one page, in the order they
 were taken, with a lightbox and download buttons. It is the read side of
 [photo-share-wedding](../photo-share-wedding), which is what the guests uploaded
 through on the day — same Backblaze bucket, opposite direction.
@@ -13,10 +13,14 @@ Backblaze bucket ──list+download──▶ GitHub Actions ──▶ Hugo ─�
       └── browser downloads full-size originals straight from the bucket
 ```
 
-Photos are never committed. Each build mirrors the bucket into `content/`, Hugo
-derives a 600px thumbnail and a 1600px lightbox copy from every photo, and only
-those derivatives are deployed — about 100 MB instead of 390 MB. The originals
-stay in Backblaze, which is also where both download buttons point.
+Photos are never committed. Each build mirrors the bucket into `content/` and
+Hugo derives a 600px thumbnail from every photo. Only those thumbnails are
+deployed — around 24 MB — because the lightbox, the tile links and both download
+buttons all point at the originals in the bucket, which are already public.
+Publishing a second full-size copy to Pages would just be the same bytes twice.
+
+Guests can still be uploading: the site picks up whatever is in the bucket at
+build time, and the workflow rebuilds daily.
 
 ## How photos get onto the site
 
@@ -31,8 +35,12 @@ Three details are worth knowing:
   chronological, and the caption under each photo is that timestamp shifted to
   local time (`params.photoUTCOffset`). EXIF dates would be better, but the
   uploader does not preserve them.
-- **HEIC.** Four photos came off iPhones as HEIC, which Hugo cannot resize.
-  They are staged under `content/.originals/` and converted to JPEG using
+- **HEIC.** Four photos came off iPhones as HEIC, which Hugo cannot resize -
+  and which browsers other than Safari cannot display either, so the slideshow
+  on the upload site could not show them. They have been converted and replaced
+  in the bucket; the originals sit in `.heic-backup/` until the JPEGs are
+  trusted. The conversion path stays in the sync tool for the next HEIC that
+  turns up: such a file is staged under `content/.originals/` and converted with
   whichever of `heif-convert`, ImageMagick or `ffmpeg` is installed. Without a
   converter the build still succeeds and says which photos it skipped.
 - **Deletions.** A photo removed from the bucket is removed from `content/` on

@@ -16,3 +16,6 @@
 /content/.originals/
 /data/album.json
 /data/originals.json
+
+# The four HEIC originals, kept until the JPEGs in the bucket are trusted
+/.heic-backup/
