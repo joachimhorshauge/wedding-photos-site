@@ -100,6 +100,11 @@ checks CORS once on load and, when the fetch is not allowed, leaves the button
 as an ordinary link that opens the photo in a new tab. Add localhost to the
 rule's origins if you want the real thing while developing.
 
+> **Setting this up for the first time?** There is a step-by-step runbook with
+> the exact values, verification commands and the bandwidth accounting at
+> <https://claude.ai/code/artifact/a97ccd01-6650-4df1-b4ce-0745fdc0d09d>.
+> This file explains how the thing works; that one is the checklist.
+
 ## The CDN in front of the bucket
 
 Backblaze meters downloads against a daily cap, and exceeding it makes the
