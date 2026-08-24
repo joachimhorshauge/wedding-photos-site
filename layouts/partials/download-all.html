@@ -1,21 +1,36 @@
-{{/* Links to the archive that `tools/b2 zip` builds and uploads next to the
-     photos. Cross-origin `download` is ignored by browsers, but B2 serves the
-     archive as application/zip so it saves rather than opens. The count and
-     size come from data/album.json, written by the same command. */}}
+{{/* Download buttons for the album archives.
+
+     Only rendered once the archives exist: `tools/b2 zip` writes
+     data/album.json when it uploads them, so a button can never promise a
+     download that would 404. The archive is split into parts small enough for
+     the CDN to cache - see the tool for why - so there may be more than one. */}}
 {{ $b2 := site.Params.b2 }}
-{{/* Only rendered once the archive exists: `tools/b2 zip` writes
-     data/album.json when it uploads one, so the button cannot promise a
-     download that would 404. */}}
-{{ $album := hugo.Data.album }}
-{{ with $album }}
-  {{ $base := $b2.cdnBase | default $b2.publicBase }}
-  {{ $href := printf "%s/%s" (strings.TrimSuffix "/" $base) $b2.zipKey }}
-  <a class="btn-download-all" href="{{ $href }}" download>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5" />
-      <path d="M3.5 16.5v2A2.5 2.5 0 0 0 6 21h12a2.5 2.5 0 0 0 2.5-2.5v-2" />
-    </svg>
-    <span>Hent alle billeder</span>
-    <span class="btn-meta">{{ .count }} billeder · {{ .sizeLabel }}</span>
-  </a>
+{{ $base := strings.TrimSuffix "/" ($b2.cdnBase | default $b2.publicBase) }}
+{{ $icon := `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5" /><path d="M3.5 16.5v2A2.5 2.5 0 0 0 6 21h12a2.5 2.5 0 0 0 2.5-2.5v-2" /></svg>` | safeHTML }}
+
+{{ with hugo.Data.album }}
+  {{ $parts := .parts }}
+  {{ if eq (len $parts) 1 }}
+    {{ $p := index $parts 0 }}
+    <a class="btn-download-all" href="{{ $base }}/{{ $p.key }}" download>
+      {{ $icon }}
+      <span>Hent alle billeder</span>
+      <span class="btn-meta">{{ .count }} billeder · {{ .sizeLabel }}</span>
+    </a>
+  {{ else }}
+    <div class="downloads">
+      <p class="downloads-lede">
+        Hent alle {{ .count }} billeder ({{ .sizeLabel }}) — delt op, så de er til at hente på en telefon:
+      </p>
+      <div class="downloads-parts">
+        {{ range $i, $p := $parts }}
+          <a class="btn-download-all" href="{{ $base }}/{{ $p.key }}" download>
+            {{ $icon }}
+            <span>Del {{ add $i 1 }}</span>
+            <span class="btn-meta">{{ $p.count }} billeder · {{ $p.sizeLabel }}</span>
+          </a>
+        {{ end }}
+      </div>
+    </div>
+  {{ end }}
 {{ end }}

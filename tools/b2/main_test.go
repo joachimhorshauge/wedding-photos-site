@@ -29,6 +29,80 @@ func TestSha1Matches(t *testing.T) {
 	}
 }
 
+func TestSplitParts(t *testing.T) {
+	mb := func(n int64) int64 { return n * 1e6 }
+	members := func(sizes ...int64) []member {
+		var out []member
+		for i, s := range sizes {
+			out = append(out, member{path: string(rune('a'+i)) + ".jpg", size: s})
+		}
+		return out
+	}
+
+	t.Run("everything under the limit is one part", func(t *testing.T) {
+		parts := splitParts(members(mb(100), mb(100), mb(100)), mb(400), "album")
+		if len(parts) != 1 || parts[0].Key != "album-1.zip" || parts[0].Count != 3 {
+			t.Fatalf("got %d parts, first %+v", len(parts), parts[0])
+		}
+	})
+
+	t.Run("splits before crossing the limit", func(t *testing.T) {
+		// 547 MB, the album's size when Cloudflare's 512 MB cache ceiling
+		// forced the split, against the 400 MB default.
+		parts := splitParts(members(mb(300), mb(150), mb(97)), mb(400), "album")
+		if len(parts) != 2 {
+			t.Fatalf("got %d parts, want 2", len(parts))
+		}
+		for _, p := range parts {
+			if p.Bytes > mb(400) {
+				t.Errorf("%s is %d bytes, over the limit", p.Key, p.Bytes)
+			}
+		}
+		if parts[0].Count != 1 || parts[1].Count != 2 {
+			t.Errorf("split in the wrong place: %d then %d", parts[0].Count, parts[1].Count)
+		}
+		if parts[1].Key != "album-2.zip" {
+			t.Errorf("second part is named %q", parts[1].Key)
+		}
+	})
+
+	t.Run("parts come out roughly even", func(t *testing.T) {
+		// 400 photos of 1.1 MB against a 250 MB limit: two parts of ~220 MB,
+		// not one of 250 MB and one of 190 MB.
+		var sizes []int64
+		for i := 0; i < 400; i++ {
+			sizes = append(sizes, 1_100_000)
+		}
+		parts := splitParts(members(sizes...), mb(250), "album")
+		if len(parts) != 2 {
+			t.Fatalf("got %d parts, want 2", len(parts))
+		}
+		diff := parts[0].Bytes - parts[1].Bytes
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff > mb(5) {
+			t.Errorf("parts differ by %d bytes: %d vs %d", diff, parts[0].Bytes, parts[1].Bytes)
+		}
+		if parts[0].Count+parts[1].Count != 400 {
+			t.Errorf("lost photos: %d + %d", parts[0].Count, parts[1].Count)
+		}
+	})
+
+	t.Run("a photo bigger than the limit still gets archived", func(t *testing.T) {
+		parts := splitParts(members(mb(500)), mb(400), "album")
+		if len(parts) != 1 || parts[0].Count != 1 {
+			t.Fatalf("oversized photo was dropped: %+v", parts)
+		}
+	})
+
+	t.Run("no photos means no parts", func(t *testing.T) {
+		if parts := splitParts(nil, mb(400), "album"); len(parts) != 0 {
+			t.Fatalf("got %d parts from nothing", len(parts))
+		}
+	})
+}
+
 func TestPlan(t *testing.T) {
 	const dir, prefix = "content", "photos/"
 

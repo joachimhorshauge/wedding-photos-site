@@ -53,8 +53,6 @@ disableKinds = ["taxonomy", "term", "rss"]
     # metered. See README. The deploy workflow reads this value too, so this is
     # the only place it needs to be set.
     cdnBase = "https://sarah.joachim.party"
-    # Archive built and uploaded by `tools/b2 zip`, linked by the download-all button.
-    zipKey = "album.zip"
 
   [params.gallery]
     boxSpacing = 10

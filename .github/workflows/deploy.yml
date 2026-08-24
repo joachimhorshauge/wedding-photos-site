@@ -28,7 +28,7 @@ env:
   HUGO_VERSION: 0.162.1
   B2_BUCKET: wedding-photos-joachim-sarah
   B2_PREFIX: photos/
-  B2_ZIP_KEY: album.zip
+  B2_ZIP_PREFIX: album
 
 jobs:
   build:

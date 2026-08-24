@@ -2,8 +2,8 @@
 //
 //	pull  downloads bucket objects into content/ as Hugo page resources,
 //	      converting the odd iPhone HEIC into something Hugo can resize
-//	zip   packs those photos into a single archive and uploads it to the bucket,
-//	      so the site can offer a "download everything" link
+//	zip   packs those photos into archives and uploads them to the bucket, so
+//	      the site can offer a "download everything" link
 //
 // It speaks B2's native API, which authenticates with plain Basic auth, so no
 // AWS SigV4 signing and no external dependencies are needed.
@@ -75,13 +75,15 @@ func main() {
 		zipName  *string
 		force    *bool
 		manifest *string
+		maxPart  *int64
 	)
 	switch cmd {
 	case "pull":
 		prune = fs.Bool("prune", true, "delete local photos that no longer exist in the bucket")
 		workers = fs.Int("workers", 8, "parallel downloads")
 	case "zip":
-		zipName = fs.String("name", envOr("B2_ZIP_KEY", "album.zip"), "key to upload the archive to (or B2_ZIP_KEY)")
+		zipName = fs.String("name", envOr("B2_ZIP_PREFIX", "album"), "key prefix for the archive parts (or B2_ZIP_PREFIX)")
+		maxPart = fs.Int64("max-part", 400e6, "largest archive part in bytes; must stay under the CDN's cacheable size")
 		force = fs.Bool("force", false, "upload even if the album is unchanged")
 		manifest = fs.String("manifest", "data/album.json", "where to write the album summary Hugo reads")
 	default:
@@ -110,7 +112,7 @@ func main() {
 	case "pull":
 		err = pull(c, *prefix, *dir, *workers, *prune)
 	case "zip":
-		err = uploadZip(c, *prefix, *dir, *zipName, *manifest, *force)
+		err = uploadZips(c, *prefix, *dir, *zipName, *manifest, *maxPart, *force)
 	}
 	if err != nil {
 		log.Fatalf("%s: %v", cmd, err)
@@ -642,81 +644,168 @@ func pruneExtras(dir string, keep map[string]bool) error {
 	return err
 }
 
-func uploadZip(c *client, prefix, dir, key, manifest string, force bool) error {
+type member struct {
+	path string
+	size int64
+}
+
+// splitParts groups photos into archives no larger than maxPart.
+//
+// Stored rather than deflated - JPEGs are already compressed - so an archive
+// is about the sum of its members and can be planned by simply adding them up.
+//
+// Parts are evened out rather than filled to the brim: packing greedily would
+// leave a 400 MB part beside a 28 MB one, and two halves are friendlier to
+// download than a big one and a scrap. A single photo larger than maxPart
+// still gets its own part - a file cannot be split, and one oversized part
+// beats refusing to build the archive.
+func splitParts(members []member, maxPart int64, keyPrefix string) []*part {
+	if len(members) == 0 {
+		return nil
+	}
+	var total int64
+	for _, m := range members {
+		total += m.size
+	}
+	count := (total + maxPart - 1) / maxPart // how many parts it has to take
+	if count < 1 {
+		count = 1
+	}
+	target := total / count
+
+	var parts []*part
+	var cur *part
+	for _, m := range members {
+		full := cur != nil && cur.Bytes+m.size > maxPart
+		evened := cur != nil && cur.Bytes >= target && int64(len(parts)) < count
+		if cur == nil || full || evened {
+			cur = &part{Key: fmt.Sprintf("%s-%d.zip", keyPrefix, len(parts)+1)}
+			parts = append(parts, cur)
+		}
+		cur.members = append(cur.members, m.path)
+		cur.Count++
+		cur.Bytes += m.size
+	}
+	return parts
+}
+
+// part is one archive: a slice of the album small enough for a CDN to cache.
+type part struct {
+	Key       string `json:"key"`
+	Count     int    `json:"count"`
+	Bytes     int64  `json:"bytes"`
+	SizeLabel string `json:"sizeLabel"`
+
+	members []string
+}
+
+// uploadZips packs the album into archives and uploads any that are missing or
+// out of date.
+//
+// They are split because a CDN will only cache a file up to a limit - 512 MB
+// on Cloudflare's lower plans - and an archive above it is fetched from
+// Backblaze in full on every single press, which is exactly the traffic the
+// CDN is there to prevent. Parts also make the download survivable on a phone.
+func uploadZips(c *client, prefix, dir, keyPrefix, manifest string, maxPart int64, force bool) error {
 	files, err := c.list(prefix)
 	if err != nil {
 		return err
 	}
-	var members []string
+
+	var members []member
 	h := sha256.New()
 	for _, f := range files {
 		at, ok := plan(dir, prefix, f.FileName)
 		if !ok {
 			continue
 		}
-		if _, err := os.Stat(at.gallery); err != nil {
+		st, err := os.Stat(at.gallery)
+		if err != nil {
 			continue // never converted; nothing to put in the archive
 		}
-		members = append(members, at.gallery)
+		members = append(members, member{at.gallery, st.Size()})
 		fmt.Fprintf(h, "%s\t%d\t%s\n", f.FileName, f.ContentLength, f.ContentSha1)
 	}
-	sort.Strings(members)
+	sort.Slice(members, func(i, j int) bool { return members[i].path < members[j].path })
 	want := hex.EncodeToString(h.Sum(nil))
 
-	existing, err := c.list(key)
-	if err != nil {
-		return err
-	}
-	for _, e := range existing {
-		if e.FileName == key && e.FileInfo[setHashKey] == want && !force {
-			log.Printf("%s is already current (%d photos)", key, len(members))
-			return writeManifest(manifest, len(members), e.ContentLength)
-		}
+	parts := splitParts(members, maxPart, keyPrefix)
+	if len(parts) == 0 {
+		return fmt.Errorf("no photos to archive: run pull first")
 	}
 
-	tmp, err := os.CreateTemp("", "album-*.zip")
+	existing := map[string]fileInfo{}
+	found, err := c.list(keyPrefix)
 	if err != nil {
 		return err
+	}
+	for _, e := range found {
+		existing[e.FileName] = e
+	}
+
+	for _, p := range parts {
+		if e, ok := existing[p.Key]; ok && e.FileInfo[setHashKey] == want && !force {
+			log.Printf("%s is already current (%d photos)", p.Key, p.Count)
+			p.Bytes = e.ContentLength
+			p.SizeLabel = sizeLabel(p.Bytes)
+			continue
+		}
+		size, err := c.uploadPart(p, want)
+		if err != nil {
+			return err
+		}
+		p.Bytes = size
+		p.SizeLabel = sizeLabel(size)
+	}
+	return writeManifest(manifest, parts)
+}
+
+func (c *client) uploadPart(p *part, setHash string) (int64, error) {
+	tmp, err := os.CreateTemp("", "album-*.zip")
+	if err != nil {
+		return 0, err
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
 
-	// Store rather than deflate: JPEGs are already compressed, so deflating
-	// them burns CI time for roughly nothing.
 	zw := zip.NewWriter(tmp)
-	for _, m := range members {
+	for _, m := range p.members {
 		if err := addToZip(zw, m); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if err := zw.Close(); err != nil {
-		return err
+		return 0, err
 	}
 
 	size, sum, err := hashFile(tmp)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	log.Printf("uploading %s (%d photos, %.0f MB)", key, len(members), float64(size)/1e6)
-	if err := c.upload(tmp, key, size, sum, map[string]string{setHashKey: want}); err != nil {
-		return err
-	}
-	return writeManifest(manifest, len(members), size)
+	log.Printf("uploading %s (%d photos, %.0f MB)", p.Key, p.Count, float64(size)/1e6)
+	return size, c.upload(tmp, p.Key, size, sum, map[string]string{setHashKey: setHash})
 }
 
-// writeManifest records what the archive holds so the download button can say
-// how much it is about to hand over.
-func writeManifest(path string, count int, size int64) error {
+// writeManifest records what the archives hold, so the download buttons can
+// say how much they are about to hand over.
+func writeManifest(path string, parts []*part) error {
 	if path == "" {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	var count int
+	var total int64
+	for _, p := range parts {
+		count += p.Count
+		total += p.Bytes
+	}
 	body, err := json.MarshalIndent(map[string]any{
+		"parts":     parts,
 		"count":     count,
-		"bytes":     size,
-		"sizeLabel": sizeLabel(size),
+		"bytes":     total,
+		"sizeLabel": sizeLabel(total),
 		"updated":   time.Now().UTC().Format(time.RFC3339),
 	}, "", "  ")
 	if err != nil {
