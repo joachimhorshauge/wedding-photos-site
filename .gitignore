@@ -1,0 +1,13 @@
+# Synced from Backblaze at build time — never committed.
+/content/*.jpg
+/content/*.jpeg
+/content/*.JPG
+/content/*.JPEG
+
+# Hugo
+/public/
+/resources/
+/.hugo_build.lock
+
+# Local credentials for `just sync`
+/.env
