@@ -50,16 +50,16 @@ re-uploaded on every build.
 
 **The button in the lightbox** saves the full-size original from the bucket.
 Browsers ignore a `download` attribute on a cross-origin link, so the file is
-fetched as a blob first — which the bucket must allow with a CORS rule:
+fetched as a blob first, which the bucket has to allow with a CORS rule. The
+bucket already has one — `weddingShareFromPagesOrigin`, added for the upload
+site — and it covers this: `s3_get` and `s3_head` from
+`https://joachimhorshauge.github.io`, which is the origin Pages serves from.
 
-- Bucket Settings → CORS Rules
-- origins: `https://joachimhorshauge.github.io` and `http://localhost:1313`
-- operations: `s3_get` and `s3_head` (`b2_download_file_by_name` too if you use
-  the friendly URLs)
-- headers: `*`, max age `3600`
-
-Without that rule nothing breaks: the site checks once on load and falls back to
-opening the photo in a new tab.
+It does not cover `http://localhost:1313`, so downloads fall back during local
+development. That is by design rather than a bug to route around: the site
+checks CORS once on load and, when the fetch is not allowed, leaves the button
+as an ordinary link that opens the photo in a new tab. Add localhost to the
+rule's origins if you want the real thing while developing.
 
 ## Setup
 
