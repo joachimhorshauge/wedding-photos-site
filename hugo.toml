@@ -20,7 +20,11 @@ disableKinds = ["taxonomy", "term", "rss"]
 
 [params]
   defaultTheme = "light"
+  # Used for the page's meta description and link previews, where repeating the
+  # date is useful. The hero uses the tagline instead, because the date already
+  # has its own line there.
   description = "Billeder fra vores bryllup, 22. august 2026."
+  tagline = "Alle billederne fra dagen, som I så den."
 
   # ---- wording -------------------------------------------------------------
   coupleNames = "Joachim & Sarah"

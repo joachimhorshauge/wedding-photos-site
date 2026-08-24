@@ -1,0 +1,3 @@
+# Overrides the theme's own Danish strings (themes/gallery/i18n/da.yaml).
+# Hugo merges these, so only the differences belong here.
+downloadTitle: Hent

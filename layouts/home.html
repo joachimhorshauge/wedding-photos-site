@@ -1,7 +1,10 @@
 {{/* The gallery is the front page: one album, no card to click through first. */}}
 
-{{/* The theme's header repeats the site title, which the hero already says. */}}
-{{ define "header" }}{{ end }}
+{{/* No header on the front page: its only content is a link home, and the hero
+     underneath already says whose wedding this is. The no-op action matters -
+     Hugo ignores a define block whose body is empty or only a comment, and the
+     theme's header comes back. */}}
+{{ define "header" }}{{- "" -}}{{ end }}
 
 {{ define "main" }}
   <section class="hero">
@@ -14,7 +17,7 @@
         <path d="M36 1.5c2.5 2.2 3.6 3.6 3.6 4.5S38.5 8.3 36 10.5C33.5 8.3 32.4 6.9 32.4 6S33.5 3.7 36 1.5Z" />
       </svg>
     </div>
-    {{ with site.Params.description }}
+    {{ with site.Params.tagline }}
       <p class="hero-lede">{{ . | markdownify }}</p>
     {{ end }}
     {{ with .Content }}

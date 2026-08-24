@@ -3,17 +3,18 @@
      archive as application/zip so it saves rather than opens. The count and
      size come from data/album.json, written by the same command. */}}
 {{ $b2 := site.Params.b2 }}
-{{ with $b2.zipKey }}
-  {{ $href := printf "%s/%s" (strings.TrimSuffix "/" $b2.publicBase) . }}
-  {{ $album := hugo.Data.album }}
+{{/* Only rendered once the archive exists: `tools/b2 zip` writes
+     data/album.json when it uploads one, so the button cannot promise a
+     download that would 404. */}}
+{{ $album := hugo.Data.album }}
+{{ with $album }}
+  {{ $href := printf "%s/%s" (strings.TrimSuffix "/" $b2.publicBase) $b2.zipKey }}
   <a class="btn-download-all" href="{{ $href }}" download>
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5" />
       <path d="M3.5 16.5v2A2.5 2.5 0 0 0 6 21h12a2.5 2.5 0 0 0 2.5-2.5v-2" />
     </svg>
-    <span>Download alle billeder</span>
-    {{ with $album }}
-      <span class="btn-meta">{{ .count }} billeder · {{ .sizeLabel }}</span>
-    {{ end }}
+    <span>Hent alle billeder</span>
+    <span class="btn-meta">{{ .count }} billeder · {{ .sizeLabel }}</span>
   </a>
 {{ end }}
