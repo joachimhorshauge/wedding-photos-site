@@ -1,6 +1,7 @@
 // Command b2 syncs the photo album between a Backblaze B2 bucket and this Hugo site.
 //
-//	pull  downloads bucket objects into content/ as Hugo page resources
+//	pull  downloads bucket objects into content/ as Hugo page resources,
+//	      converting the odd iPhone HEIC into something Hugo can resize
 //	zip   packs those photos into a single archive and uploads it to the bucket,
 //	      so the site can offer a "download everything" link
 //
@@ -23,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -254,23 +256,50 @@ func (c *client) list(prefix string) ([]fileInfo, error) {
 
 var imageExt = map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".gif": true}
 
-// localPath maps a bucket key to its place in the Hugo content tree. Objects
+// heicExt lists what phones upload that Hugo's image processing cannot read.
+var heicExt = map[string]bool{".heic": true, ".heif": true}
+
+// stagingDir holds files that are not page resources themselves, only the
+// source of one. Hugo ignores directories whose name starts with a dot.
+const stagingDir = ".originals"
+
+// placement says where a bucket object lands locally: download is where the
+// bytes are written, gallery is the page resource Hugo ends up seeing. They
+// differ only for formats that have to be converted first.
+type placement struct {
+	download string
+	gallery  string
+	convert  bool
+}
+
+// plan maps a bucket key to its place in the Hugo content tree. Objects
 // directly under the prefix belong to the home page's gallery; a subdirectory
 // becomes its own album.
-func localPath(dir, prefix, key string) (string, bool) {
+func plan(dir, prefix, key string) (placement, bool) {
 	rel := strings.TrimPrefix(key, prefix)
 	if rel == "" || strings.HasSuffix(rel, "/") {
-		return "", false
-	}
-	if !imageExt[strings.ToLower(filepath.Ext(rel))] {
-		return "", false
+		return placement{}, false
 	}
 	// Reject anything that would escape the content directory.
-	clean := path.Clean("/" + rel)
+	clean := strings.TrimPrefix(path.Clean("/"+rel), "/")
 	if strings.Contains(clean, "..") {
-		return "", false
+		return placement{}, false
 	}
-	return filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(clean, "/"))), true
+	ext := strings.ToLower(path.Ext(clean))
+	local := filepath.Join(dir, filepath.FromSlash(clean))
+
+	switch {
+	case imageExt[ext]:
+		return placement{download: local, gallery: local}, true
+	case heicExt[ext]:
+		staged := filepath.Join(dir, stagingDir, filepath.FromSlash(clean))
+		return placement{
+			download: staged,
+			gallery:  strings.TrimSuffix(local, filepath.Ext(local)) + ".jpg",
+			convert:  true,
+		}, true
+	}
+	return placement{}, false
 }
 
 func pull(c *client, prefix, dir string, workers int, prune bool) error {
@@ -281,25 +310,42 @@ func pull(c *client, prefix, dir string, workers int, prune bool) error {
 
 	type job struct {
 		file fileInfo
-		dest string
+		at   placement
 	}
 	var jobs []job
 	keep := map[string]bool{}
 	albums := map[string]bool{}
+	// Which bucket key backs each photo, for the download buttons.
+	origins := map[string]string{}
 
 	for _, f := range files {
-		dest, ok := localPath(dir, prefix, f.FileName)
+		at, ok := plan(dir, prefix, f.FileName)
 		if !ok {
 			continue
 		}
-		keep[dest] = true
-		if sub := filepath.Dir(dest); sub != filepath.Clean(dir) {
+		keep[at.download] = true
+		keep[at.gallery] = true
+		if sub := filepath.Dir(at.gallery); sub != filepath.Clean(dir) {
 			albums[sub] = true
 		}
-		if st, err := os.Stat(dest); err == nil && st.Size() == f.ContentLength {
+		// A converted photo has no full-size counterpart in the bucket worth
+		// linking to: it is in a format half the guests cannot open.
+		if !at.convert {
+			origins[filepath.ToSlash(mustRel(dir, at.gallery))] = f.FileName
+		}
+		have := false
+		if st, err := os.Stat(at.download); err == nil && st.Size() == f.ContentLength {
+			have = true
+		}
+		if have && !at.convert {
 			continue // already have it; B2 keys are unique per upload
 		}
-		jobs = append(jobs, job{f, dest})
+		if have && at.convert {
+			if _, err := os.Stat(at.gallery); err == nil {
+				continue
+			}
+		}
+		jobs = append(jobs, job{f, at})
 	}
 
 	log.Printf("bucket has %d photos, %d to download", len(keep), len(jobs))
@@ -316,7 +362,7 @@ func pull(c *client, prefix, dir string, workers int, prune bool) error {
 		go func() {
 			defer wg.Done()
 			for j := range ch {
-				err := c.download(j.file, j.dest)
+				err := c.fetch(j.file, j.at)
 				mu.Lock()
 				if err != nil && firstErr == nil {
 					firstErr = err
@@ -343,12 +389,92 @@ func pull(c *client, prefix, dir string, workers int, prune bool) error {
 			return err
 		}
 	}
+	if err := writeOrigins(filepath.Join("data", "originals.json"), origins); err != nil {
+		return err
+	}
 	if prune {
 		if err := pruneExtras(dir, keep); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// fetch downloads one object and, when the format needs it, converts the
+// result into a JPEG that Hugo can resize.
+func (c *client) fetch(f fileInfo, at placement) error {
+	if st, err := os.Stat(at.download); err != nil || st.Size() != f.ContentLength {
+		if err := c.download(f, at.download); err != nil {
+			return err
+		}
+	}
+	if !at.convert {
+		return nil
+	}
+	return toJPEG(at.download, at.gallery)
+}
+
+// converters are tried in order; the first one present on the machine wins.
+var converters = [][]string{
+	{"heif-convert", "-q", "90", "{in}", "{out}"},
+	{"magick", "{in}", "-quality", "90", "{out}"},
+	{"convert", "{in}", "-quality", "90", "{out}"},
+	{"ffmpeg", "-v", "error", "-y", "-i", "{in}", "-frames:v", "1", "-q:v", "2", "{out}"},
+}
+
+var (
+	converterOnce sync.Once
+	converterArgs []string
+)
+
+func toJPEG(src, dest string) error {
+	converterOnce.Do(func() {
+		for _, cand := range converters {
+			if _, err := exec.LookPath(cand[0]); err == nil {
+				converterArgs = cand
+				return
+			}
+		}
+	})
+	if converterArgs == nil {
+		log.Printf("warning: no HEIC converter found (install libheif-examples); skipping %s", filepath.Base(src))
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	args := make([]string, 0, len(converterArgs)-1)
+	for _, a := range converterArgs[1:] {
+		a = strings.ReplaceAll(a, "{in}", src)
+		args = append(args, strings.ReplaceAll(a, "{out}", dest))
+	}
+	out, err := exec.Command(converterArgs[0], args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("convert %s: %v: %s", filepath.Base(src), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func mustRel(base, p string) string {
+	rel, err := filepath.Rel(base, p)
+	if err != nil {
+		return filepath.Base(p)
+	}
+	return rel
+}
+
+// writeOrigins records, for each photo Hugo will see, the bucket key holding
+// its full-size version. The templates use it to link the download buttons,
+// and fall back to the published copy for photos that have no entry.
+func writeOrigins(path string, origins map[string]string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	body, err := json.MarshalIndent(origins, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(body, '\n'), 0o644)
 }
 
 func (c *client) download(f fileInfo, dest string) error {
@@ -432,7 +558,11 @@ func pruneExtras(dir string, keep map[string]bool) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		if !imageExt[strings.ToLower(filepath.Ext(p))] || keep[p] {
+		ext := strings.ToLower(filepath.Ext(p))
+		if !imageExt[ext] && !heicExt[ext] {
+			return nil
+		}
+		if keep[p] {
 			return nil
 		}
 		removed++
@@ -452,11 +582,14 @@ func uploadZip(c *client, prefix, dir, key, manifest string, force bool) error {
 	var members []string
 	h := sha256.New()
 	for _, f := range files {
-		dest, ok := localPath(dir, prefix, f.FileName)
+		at, ok := plan(dir, prefix, f.FileName)
 		if !ok {
 			continue
 		}
-		members = append(members, dest)
+		if _, err := os.Stat(at.gallery); err != nil {
+			continue // never converted; nothing to put in the archive
+		}
+		members = append(members, at.gallery)
 		fmt.Fprintf(h, "%s\t%d\t%s\n", f.FileName, f.ContentLength, f.ContentSha1)
 	}
 	sort.Strings(members)

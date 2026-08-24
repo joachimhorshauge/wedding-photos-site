@@ -5,7 +5,7 @@
 {{ $b2 := site.Params.b2 }}
 {{ with $b2.zipKey }}
   {{ $href := printf "%s/%s" (strings.TrimSuffix "/" $b2.publicBase) . }}
-  {{ $album := site.Data.album }}
+  {{ $album := hugo.Data.album }}
   <a class="btn-download-all" href="{{ $href }}" download>
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M12 3v12m0 0 4.5-4.5M12 15l-4.5-4.5" />

@@ -1,7 +1,11 @@
 # Local/default baseURL. The GitHub Actions build overrides this with the real
 # Pages URL (see .github/workflows/deploy.yml).
 baseURL = "https://joachimhorshauge.github.io/wedding-photos-site/"
-languageCode = "da-DK"
+theme = "gallery"
+
+# Danish month names in captions, Danish strings from the theme's i18n/da.yaml.
+defaultContentLanguage = "da"
+locale = "da-DK"
 title = "Joachim & Sarah"
 copyright = "Joachim & Sarah · 22. august 2026"
 enableRobotsTXT = true
@@ -23,9 +27,9 @@ disableKinds = ["taxonomy", "term", "rss"]
   eventDate = "22. august 2026"
 
   # Photos without EXIF fall back to the upload timestamp in their filename,
-  # which the uploader writes in UTC. The album spans one August weekend, so a
-  # single offset (CEST) is enough to show local wall-clock time.
-  photoUTCOffset = "+02:00"
+  # which the uploader writes in UTC. The album spans one August weekend, so
+  # shifting every one of them by CEST is enough to show local wall-clock time.
+  photoUTCOffset = "2h"
 
   # ---- Backblaze -----------------------------------------------------------
   # Where the browser fetches full-size originals and the album archive. The
@@ -33,8 +37,6 @@ disableKinds = ["taxonomy", "term", "rss"]
   # bucket does, and that happens at build time.
   [params.b2]
     publicBase = "https://s3.eu-central-003.backblazeb2.com/wedding-photos-joachim-sarah"
-    # Key prefix the photos live under, mirrored into content/ by `tools/b2 pull`.
-    prefix = "photos/"
     # Archive built and uploaded by `tools/b2 zip`, linked by the download-all button.
     zipKey = "album.zip"
 

@@ -11,3 +11,8 @@
 
 # Local credentials for `just sync`
 /.env
+
+# Staged HEIC originals and the summaries written by `tools/b2 pull` / `zip`
+/content/.originals/
+/data/album.json
+/data/originals.json

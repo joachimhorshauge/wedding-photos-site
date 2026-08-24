@@ -10,13 +10,15 @@
      Diff against the theme file when bumping the submodule. */}}
 
 {{ $b2 := site.Params.b2 }}
-{{/* Bucket key for this page's photos: the prefix, plus the album
-     subdirectory when the photos are not the home page's own. */}}
-{{ $keyPrefix := $b2.prefix }}
+{{/* Which bucket key holds each photo's full-size version, written by
+     `tools/b2 pull`. Photos with no entry (a HEIC converted at build time)
+     fall back to the copy Hugo published. */}}
+{{ $originals := hugo.Data.originals }}
+{{ $albumDir := "" }}
 {{ with .File }}
   {{ $dir := path.Dir .Path }}
   {{ if and $dir (ne $dir ".") }}
-    {{ $keyPrefix = printf "%s%s/" $b2.prefix $dir }}
+    {{ $albumDir = printf "%s/" $dir }}
   {{ end }}
 {{ end }}
 
@@ -48,7 +50,8 @@
         {{ $stem := replace $image.Name (path.Ext $image.Name) "" }}
         {{ if findRE `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}` $stem }}
           {{ $clock := replace (substr $stem 11 8) "-" ":" }}
-          {{ $date = time.AsTime (printf "%sT%s%s" (substr $stem 0 10) $clock site.Params.photoUTCOffset) }}
+          {{ $utc := time.AsTime (printf "%sT%sZ" (substr $stem 0 10) $clock) }}
+          {{ $date = $utc.Add (time.ParseDuration site.Params.photoUTCOffset) }}
         {{ end }}
       {{ end }}
       {{ $images = $images | append (dict
@@ -63,6 +66,7 @@
     {{ $publishResources := default true .Params.build.publishResources }}
     {{ range sort $images (.Params.sort_by | default "Name") (.Params.sort_order | default "asc") }}
       {{ $image := .image }}
+      {{ $name := .Name }}
       {{ $thumbnail := $image.Filter (slice images.AutoOrient (images.Process "fit 600x600")) }}
       {{ $full := $image.Filter (slice images.AutoOrient (images.Process "fit 1600x1600")) }}
       {{ $color := index $thumbnail.Colors 0 | default "transparent" }}
@@ -76,7 +80,12 @@
       {{ $alt := $caption | default "Bryllupsfoto" }}
 
       {{/* Full-size file in the bucket, and a filename worth saving as. */}}
-      {{ $original := printf "%s/%s%s" (strings.TrimSuffix "/" $b2.publicBase) $keyPrefix .Name }}
+      {{ $original := $full.Permalink }}
+      {{ with $originals }}
+        {{ with index . (printf "%s%s" $albumDir $name) }}
+          {{ $original = printf "%s/%s" (strings.TrimSuffix "/" $b2.publicBase) . }}
+        {{ end }}
+      {{ end }}
       {{ $saveAs := .Name }}
       {{ with .Date }}
         {{ $saveAs = printf "%s-%s%s" (urlize site.Params.coupleNames) (time.Format "2006-01-02-150405" .) (path.Ext $image.Name) }}
