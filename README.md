@@ -118,16 +118,20 @@ setting this up in the wrong order cannot produce dead download buttons.
 
 ### Setting it up
 
-1. **Add `joachimhorshauge.com` to Cloudflare** and let it scan the existing
-   records. Do not change nameservers yet.
-2. **Check the email records came across** (see below), because moving
-   nameservers moves the whole zone, mail included.
-3. **Change the nameservers at simply.com** to the pair Cloudflare gives you.
-4. **DNS → add a CNAME**: name `bryllup`, target `f003.backblazeb2.com`,
+`joachim.party` was registered for this and carries nothing else - no website,
+no mail - so moving it to Cloudflare has no blast radius. Check that with
+`dig joachim.party MX` before starting if you ever reuse these steps on a
+domain that is already doing something.
+
+1. **Add `joachim.party` to Cloudflare** (free plan) and let it scan. There is
+   nothing to import.
+2. **Change the nameservers at the registrar** to the pair Cloudflare gives you,
+   and wait for Cloudflare to report the zone active.
+3. **DNS → add a CNAME**: name `sarah`, target `f003.backblazeb2.com`,
    **Proxied** (orange cloud). Without the proxy there is no CDN and no free
    egress.
-5. **Rules → Transform Rules → Rewrite URL**, matching
-   `http.host eq "bryllup.joachimhorshauge.com"`, rewriting the path to:
+4. **Rules → Transform Rules → Rewrite URL**, matching
+   `http.host eq "sarah.joachim.party"`, rewriting the path to:
 
    ```
    concat("/file/wedding-photos-joachim-sarah", http.request.uri.path)
@@ -137,32 +141,25 @@ setting this up in the wrong order cannot produce dead download buttons.
    hostname, so without the rule someone can use your domain to fetch another
    customer's bucket.
 
-Then `https://bryllup.joachimhorshauge.com/album.zip` and
-`.../photos/<name>.jpg` resolve to this bucket, which is exactly the shape the
-templates and `tools/b2 pull` build.
+5. **Rules → Transform Rules → Modify Response Header**, same hostname match,
+   **set static** `access-control-allow-origin` to `*`.
 
-### Records that must survive the nameserver move
+   This one is easy to skip and the failure is confusing. Saving a photo from
+   the lightbox fetches it as a blob, which needs a CORS header; the bucket
+   sends one, but only when the request carries a matching `Origin`. Cloudflare
+   ignores `Vary` on non-Enterprise plans, so whichever response lands in the
+   edge cache first is served to everyone - and the first request for most
+   photos comes from the build, which sends no `Origin` at all. Letting
+   Cloudflare add the header itself makes it independent of what got cached.
+   The bucket is public, so `*` gives nothing away.
 
-Mail runs through SimpleLogin on this zone. Cloudflare usually imports all of
-this, but verify each one before flipping the nameservers:
+   Without it nothing breaks visibly: the page checks CORS on load and falls
+   back to opening the photo in a new tab instead of saving it.
 
-| Name | Type | Value | Proxy |
-| --- | --- | --- | --- |
-| `@` | MX | `mx1.simplelogin.co` (priority 10) | n/a |
-| `@` | MX | `mx2.simplelogin.co` (priority 20) | n/a |
-| `@` | TXT | `v=spf1 include:simplelogin.co ~all` | n/a |
-| `dkim._domainkey` | CNAME | `dkim._domainkey.simplelogin.co` | **DNS only** |
-| `dkim02._domainkey` | CNAME | `dkim02._domainkey.simplelogin.co` | **DNS only** |
-| `dkim03._domainkey` | CNAME | `dkim03._domainkey.simplelogin.co` | **DNS only** |
-
-The DKIM records must stay grey-clouded: proxying a DKIM CNAME breaks signing,
-and broken signing means mail starts landing in spam.
-
-There is also a stray TXT record at the apex whose value is the literal string
-`_dmarc`, while `_dmarc.joachimhorshauge.com` has no record at all. That looks
-like a DMARC record that was created with the name in the value field, so DMARC
-is currently not configured. Unrelated to this site, but worth fixing while you
-are in the DNS anyway.
+Then `https://sarah.joachim.party/album.zip` and `.../photos/<name>.jpg`
+resolve to this bucket, which is exactly the shape the templates and
+`tools/b2 pull` build. Nothing else needs changing: the next build notices the
+CDN is serving and switches the download links to it.
 
 ## Setup
 
