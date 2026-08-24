@@ -513,10 +513,25 @@ func (c *client) download(f fileInfo, dest string) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if got := hex.EncodeToString(sum.Sum(nil)); f.ContentSha1 != "none" && !strings.EqualFold(got, f.ContentSha1) {
+	if !sha1Matches(f.ContentSha1, hex.EncodeToString(sum.Sum(nil))) {
 		return fmt.Errorf("%s: checksum mismatch", f.FileName)
 	}
 	return os.Rename(tmp.Name(), dest)
+}
+
+// sha1Matches compares a download against the checksum B2 recorded for it.
+//
+// Two of B2's answers are not checksums at all. "none" comes back for large
+// files, which store their hash per part. The "unverified:" prefix means the
+// client never declared a hash when uploading, so B2 computed one itself and
+// flags that it was not cross-checked - which is how everything arriving
+// through a presigned S3 PUT is stored, and that is most of this bucket. Both
+// still identify the bytes; only the promise about who computed them differs.
+func sha1Matches(recorded, got string) bool {
+	if recorded == "none" || recorded == "" {
+		return true
+	}
+	return strings.EqualFold(strings.TrimPrefix(recorded, "unverified:"), got)
 }
 
 // urlEncodePath escapes each path segment but keeps the separators intact.
