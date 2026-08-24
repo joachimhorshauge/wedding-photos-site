@@ -9,15 +9,27 @@ through on the day — same Backblaze bucket, opposite direction.
 Backblaze bucket ──list+download──▶ GitHub Actions ──▶ Hugo ──▶ GitHub Pages
   photos/*.jpg      (build time)          │              thumbnails +
   album.zip ◀────── zip + upload ─────────┘              1600px lightbox copies
-      ▲
-      └── browser downloads full-size originals straight from the bucket
+      ▲                                                          │
+      │                                              guests browse from here
+      └── ...and only when someone presses a download button
 ```
 
-Photos are never committed. Each build mirrors the bucket into `content/` and
-Hugo derives a 600px thumbnail from every photo. Only those thumbnails are
-deployed — around 24 MB — because the lightbox, the tile links and both download
-buttons all point at the originals in the bucket, which are already public.
-Publishing a second full-size copy to Pages would just be the same bytes twice.
+Photos are never committed. Each build mirrors the bucket into `content/`, Hugo
+derives a 600px thumbnail and a 1600px lightbox copy from every photo, and only
+those derivatives are deployed — around 140 MB rather than the 500 MB of
+originals.
+
+**Viewing and downloading are deliberately split.** Everything a guest browses
+comes from Pages, which is free and cannot run out. Backblaze is touched only
+when someone presses a download button, and by the build itself.
+
+That split is not premature optimisation. Serving the lightbox straight from the
+bucket was tried and taken back out: B2 downloads are metered against a daily
+cap, one guest opening every photo is around 500 MB, and exceeding the cap makes
+the bucket return 403 to *everyone* — this gallery, the upload site and its
+slideshow at once. A CDN in front of the bucket would fix that too, and would be
+the right answer at a larger scale, but Pages already serves these bytes for
+free.
 
 Guests can still be uploading: the site picks up whatever is in the bucket at
 build time, and the workflow rebuilds daily.
@@ -27,6 +39,12 @@ build time, and the workflow rebuilds daily.
 `tools/b2 pull` lists the bucket and downloads what is missing. It speaks B2's
 native API, which authenticates with plain Basic auth, so the build needs no AWS
 signing and no dependencies beyond the Go standard library.
+
+It downloads because B2 is object storage: it stores bytes and has no way to
+resize them, so a 600px thumbnail has to be made somewhere, and the build is the
+only place that can. Each photo is read exactly once — the mirror is cached
+between runs, including when a run fails part-way, so a normal build fetches
+only the photos guests added since the last one.
 
 Three details are worth knowing:
 

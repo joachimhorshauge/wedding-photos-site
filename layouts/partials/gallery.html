@@ -1,13 +1,15 @@
 {{/* Forked from hugo-theme-gallery v4.9.3 (layouts/partials/gallery.html).
      Two changes, both about photos that live in Backblaze rather than in git:
 
-       1. the lightbox and the download button use the original in the bucket.
-          The theme publishes a 1600px copy of every photo for this, which here
-          would be 82 MB of Pages hosting duplicating files that are already
-          public. Only thumbnails are generated now, and only photos with no
-          usable bucket original (a converted HEIC) still get a published copy;
+       1. the download button hands over the full-size original from the
+          bucket, rather than the 1600px copy the theme publishes. Viewing and
+          downloading are deliberately split: browsing is served by Pages,
+          which is free and cannot run out, while Backblaze is touched only
+          when someone actually asks for a file. Serving the lightbox from the
+          bucket instead put every guest's scrolling against a daily bandwidth
+          cap, and exhausting it returns 403 for everyone;
        2. tiles get a date caption, because these filenames are upload
-          timestamps and nobody wrote titles for 334 photos.
+          timestamps and nobody wrote titles for hundreds of photos.
 
      Diff against the theme file when bumping the submodule. */}}
 
@@ -69,6 +71,7 @@
       {{ $image := .image }}
       {{ $name := .Name }}
       {{ $thumbnail := $image.Filter (slice images.AutoOrient (images.Process "fit 600x600")) }}
+      {{ $full := $image.Filter (slice images.AutoOrient (images.Process "fit 1600x1600")) }}
       {{ $color := index $thumbnail.Colors 0 | default "transparent" }}
 
       {{/* Caption: a written title if there is one, otherwise when it was taken. */}}
@@ -79,47 +82,28 @@
       {{ $caption := .Title | default $when }}
       {{ $alt := $caption | default "Bryllupsfoto" }}
 
-      {{/* What the lightbox shows and the download button hands over: the
-           original in the bucket, or - for a photo converted at build time,
-           which has no bucket copy anyone could open - a published 1600px
-           version. Generating that costs a resize, so it happens only in the
-           branch that needs it. */}}
-      {{ $key := "" }}
+      {{/* What the download button hands over: the full-size original in the
+           bucket. A photo converted at build time has no bucket copy anyone
+           could open, so it falls back to the published version. */}}
+      {{ $download := $full.Permalink }}
       {{ with $originals }}
-        {{ $key = index . (printf "%s%s" $albumDir $name) }}
-      {{ end }}
-      {{ $original := "" }}
-      {{ $width := 0 }}
-      {{ $height := 0 }}
-      {{ if $key }}
-        {{ $original = printf "%s/%s" (strings.TrimSuffix "/" $b2.publicBase) $key }}
-        {{/* Hugo reports the stored dimensions; the thumbnail has been through
-             AutoOrient, so its shape says whether the two are swapped. */}}
-        {{ $width = $image.Width }}
-        {{ $height = $image.Height }}
-        {{ if ne (gt $thumbnail.Width $thumbnail.Height) (gt $width $height) }}
-          {{ $width = $image.Height }}
-          {{ $height = $image.Width }}
+        {{ with index . (printf "%s%s" $albumDir $name) }}
+          {{ $download = printf "%s/%s" (strings.TrimSuffix "/" $b2.publicBase) . }}
         {{ end }}
-      {{ else }}
-        {{ $full := $image.Filter (slice images.AutoOrient (images.Process "fit 1600x1600")) }}
-        {{ $original = $full.Permalink }}
-        {{ $width = $full.Width }}
-        {{ $height = $full.Height }}
       {{ end }}
       {{ $saveAs := .Name }}
       {{ with .Date }}
         {{ $saveAs = printf "%s-%s%s" (urlize site.Params.coupleNames) (time.Format "2006-01-02-150405" .) (path.Ext $image.Name) }}
       {{ end }}
 
-      <a class="gallery-item" href="{{ $original }}" data-pswp-src="{{ $original }}" data-pswp-width="{{ $width }}" data-pswp-height="{{ $height }}" data-pswp-target="{{ $image.Name | urlize }}" data-original="{{ $original }}" data-filename="{{ $saveAs }}" title="{{ $caption }}" itemscope itemtype="https://schema.org/ImageObject" style="aspect-ratio: {{ $thumbnail.Width }} / {{ $thumbnail.Height }}">
+      <a class="gallery-item" href="{{ $full.RelPermalink }}" data-pswp-src="{{ $full.RelPermalink }}" data-pswp-width="{{ $full.Width }}" data-pswp-height="{{ $full.Height }}" data-pswp-target="{{ $image.Name | urlize }}" data-original="{{ $download }}" data-filename="{{ $saveAs }}" title="{{ $caption }}" itemscope itemtype="https://schema.org/ImageObject" style="aspect-ratio: {{ $thumbnail.Width }} / {{ $thumbnail.Height }}">
         <figure style="background-color: {{ $color }}; aspect-ratio: {{ $thumbnail.Width }} / {{ $thumbnail.Height }}">
           <img class="lazyload" width="{{ $thumbnail.Width }}" height="{{ $thumbnail.Height }}" data-src="{{ $thumbnail.RelPermalink }}" alt="{{ $alt }}" />
         </figure>
         {{ with $caption }}
           <span class="pswp-caption-content">{{ . }}</span>
         {{ end }}
-        <meta itemprop="contentUrl" content="{{ $original }}" />
+        <meta itemprop="contentUrl" content="{{ $download }}" />
         {{ with site.Params.Author }}
           <span itemprop="creator" itemtype="https://schema.org/Person" itemscope>
             <meta itemprop="name" content="{{ site.Params.Author.name }}" />
