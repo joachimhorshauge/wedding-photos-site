@@ -1,0 +1,99 @@
+# Bryllupsbilleder
+
+The finished album from the wedding: 334 photos on one page, in the order they
+were taken, with a lightbox and download buttons. It is the read side of
+[photo-share-wedding](../photo-share-wedding), which is what the guests uploaded
+through on the day — same Backblaze bucket, opposite direction.
+
+```
+Backblaze bucket ──list+download──▶ GitHub Actions ──▶ Hugo ──▶ GitHub Pages
+  photos/*.jpg      (build time)          │              thumbnails +
+  album.zip ◀────── zip + upload ─────────┘              1600px lightbox copies
+      ▲
+      └── browser downloads full-size originals straight from the bucket
+```
+
+Photos are never committed. Each build mirrors the bucket into `content/`, Hugo
+derives a 600px thumbnail and a 1600px lightbox copy from every photo, and only
+those derivatives are deployed — about 100 MB instead of 390 MB. The originals
+stay in Backblaze, which is also where both download buttons point.
+
+## How photos get onto the site
+
+`tools/b2 pull` lists the bucket and downloads what is missing. It speaks B2's
+native API, which authenticates with plain Basic auth, so the build needs no AWS
+signing and no dependencies beyond the Go standard library.
+
+Three details are worth knowing:
+
+- **Ordering.** The uploader names files by upload time in UTC
+  (`2026-08-22T15-03-08-364-a5d53c11.jpg`), so sorting by filename is
+  chronological, and the caption under each photo is that timestamp shifted to
+  local time (`params.photoUTCOffset`). EXIF dates would be better, but the
+  uploader does not preserve them.
+- **HEIC.** Four photos came off iPhones as HEIC, which Hugo cannot resize.
+  They are staged under `content/.originals/` and converted to JPEG using
+  whichever of `heif-convert`, ImageMagick or `ffmpeg` is installed. Without a
+  converter the build still succeeds and says which photos it skipped.
+- **Deletions.** A photo removed from the bucket is removed from `content/` on
+  the next pull, so it also leaves the site.
+
+`tools/b2 zip` packs the same photos into `album.zip`, uploads it next to them,
+and writes `data/album.json` so the button can say how large the download is.
+The archive is tagged with a hash of the photo set, so an unchanged album is not
+re-uploaded on every build.
+
+## Downloads
+
+**Download alle billeder** links straight to `album.zip`. Backblaze serves it as
+`application/zip`, so browsers save it rather than open it.
+
+**The button in the lightbox** saves the full-size original from the bucket.
+Browsers ignore a `download` attribute on a cross-origin link, so the file is
+fetched as a blob first — which the bucket must allow with a CORS rule:
+
+- Bucket Settings → CORS Rules
+- origins: `https://joachimhorshauge.github.io` and `http://localhost:1313`
+- operations: `s3_get` and `s3_head` (`b2_download_file_by_name` too if you use
+  the friendly URLs)
+- headers: `*`, max age `3600`
+
+Without that rule nothing breaks: the site checks once on load and falls back to
+opening the photo in a new tab.
+
+## Setup
+
+1. **A Backblaze application key restricted to the bucket**, with `listFiles`,
+   `readFiles` and `writeFiles`. Write access is only used to upload
+   `album.zip`; the photos themselves are never touched.
+2. **Repository secrets** `B2_KEY_ID` and `B2_APP_KEY` (Settings → Secrets and
+   variables → Actions).
+3. **Pages source: GitHub Actions** (Settings → Pages).
+
+The bucket name, prefix and archive key live in `.github/workflows/deploy.yml`;
+the public bucket URL the browser uses lives in `hugo.toml` under `params.b2`.
+
+## Local development
+
+```sh
+just pull   # mirror the bucket into content/ (needs B2_KEY_ID and B2_APP_KEY in .env)
+just dev    # http://localhost:1313/wedding-photos-site/
+```
+
+A cold build resizes 668 images and takes about a minute; after that Hugo reuses
+`resources/` and rebuilds in a second or two. CI caches both `content/` and
+`resources/` under a key naming the exact photo set, so a build that finds
+nothing new in the bucket does almost no work.
+
+## Theme
+
+[hugo-theme-gallery](https://github.com/nicokaiser/hugo-theme-gallery) v4.9.3,
+pinned as a submodule. Two of its files are forked, each with a header saying
+what changed and why:
+
+- `layouts/partials/gallery.html` — tiles carry the bucket key of their
+  full-size original, and get a date caption
+- `assets/js/lightbox.js` — the download button saves that original instead of
+  the published 1600px copy
+
+Diff them against the theme when bumping the submodule.

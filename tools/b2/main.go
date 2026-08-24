@@ -657,12 +657,13 @@ func writeManifest(path string, count int, size int64) error {
 	return os.WriteFile(path, append(body, '\n'), 0o644)
 }
 
+// sizeLabel counts in decimal megabytes, the way Backblaze's console and most
+// people do, with a Danish decimal comma.
 func sizeLabel(size int64) string {
-	const mb = 1 << 20
-	if size >= 1<<30 {
-		return strings.Replace(fmt.Sprintf("%.1f GB", float64(size)/(1<<30)), ".", ",", 1)
+	if size >= 1e9 {
+		return strings.Replace(fmt.Sprintf("%.1f GB", float64(size)/1e9), ".", ",", 1)
 	}
-	return fmt.Sprintf("%d MB", (size+mb/2)/mb)
+	return fmt.Sprintf("%.0f MB", float64(size)/1e6)
 }
 
 func addToZip(zw *zip.Writer, name string) error {
