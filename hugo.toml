@@ -41,6 +41,18 @@ disableKinds = ["taxonomy", "term", "rss"]
   # bucket does, and that happens at build time.
   [params.b2]
     publicBase = "https://s3.eu-central-003.backblazeb2.com/wedding-photos-joachim-sarah"
+
+    # Cloudflare in front of the bucket, so downloads cost no Backblaze
+    # bandwidth (Bandwidth Alliance) and a file is read from the bucket about
+    # once however many guests fetch it. Set this to the proxied hostname, with
+    # no trailing slash and no /file/<bucket> - the Transform Rule adds that:
+    #
+    #   cdnBase = "https://billeder.example.dk"
+    #
+    # Empty means downloads go straight to Backblaze, which works but is
+    # metered. See README. The deploy workflow reads this value too, so this is
+    # the only place it needs to be set.
+    cdnBase = "https://bryllup.joachimhorshauge.com"
     # Archive built and uploaded by `tools/b2 zip`, linked by the download-all button.
     zipKey = "album.zip"
 

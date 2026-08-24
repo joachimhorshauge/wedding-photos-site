@@ -14,6 +14,8 @@
      Diff against the theme file when bumping the submodule. */}}
 
 {{ $b2 := site.Params.b2 }}
+{{/* Downloads go through the CDN when one is configured; see hugo.toml. */}}
+{{ $downloadBase := strings.TrimSuffix "/" ($b2.cdnBase | default $b2.publicBase) }}
 {{/* Which bucket key holds each photo's full-size version, written by
      `tools/b2 pull`. Photos with no entry (a HEIC converted at build time)
      fall back to the copy Hugo published. */}}
@@ -88,7 +90,7 @@
       {{ $download := $full.Permalink }}
       {{ with $originals }}
         {{ with index . (printf "%s%s" $albumDir $name) }}
-          {{ $download = printf "%s/%s" (strings.TrimSuffix "/" $b2.publicBase) . }}
+          {{ $download = printf "%s/%s" $downloadBase . }}
         {{ end }}
       {{ end }}
       {{ $saveAs := .Name }}

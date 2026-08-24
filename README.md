@@ -11,7 +11,7 @@ Backblaze bucket ──list+download──▶ GitHub Actions ──▶ Hugo ─�
   album.zip ◀────── zip + upload ─────────┘              1600px lightbox copies
       ▲                                                          │
       │                                              guests browse from here
-      └── ...and only when someone presses a download button
+      └── Cloudflare ◀── ...and only when someone presses a download button
 ```
 
 Photos are never committed. Each build mirrors the bucket into `content/`, Hugo
@@ -99,6 +99,70 @@ development. That is by design rather than a bug to route around: the site
 checks CORS once on load and, when the fetch is not allowed, leaves the button
 as an ordinary link that opens the photo in a new tab. Add localhost to the
 rule's origins if you want the real thing while developing.
+
+## The CDN in front of the bucket
+
+Backblaze meters downloads against a daily cap, and exceeding it makes the
+bucket return 403 to everyone. Browsing does not touch B2 at all, but the
+download buttons do, and `album.zip` is over 400 MB a press. Cloudflare in front
+fixes both halves: egress from B2 to Cloudflare is free under the Bandwidth
+Alliance, and the edge cache means the bucket is read about once per file no
+matter how many guests fetch it. The build pulls through it too, so a lost photo
+cache no longer re-reads the whole album from B2.
+
+`params.b2.cdnBase` in `hugo.toml` names the hostname, and is the only place it
+is written down — the workflow reads the same value. Before each deploy the
+build asks the CDN for a photo it knows exists; if it cannot serve one, that
+build links straight to Backblaze instead and the next build tries again. So
+setting this up in the wrong order cannot produce dead download buttons.
+
+### Setting it up
+
+1. **Add `joachimhorshauge.com` to Cloudflare** and let it scan the existing
+   records. Do not change nameservers yet.
+2. **Check the email records came across** (see below), because moving
+   nameservers moves the whole zone, mail included.
+3. **Change the nameservers at simply.com** to the pair Cloudflare gives you.
+4. **DNS → add a CNAME**: name `bryllup`, target `f003.backblazeb2.com`,
+   **Proxied** (orange cloud). Without the proxy there is no CDN and no free
+   egress.
+5. **Rules → Transform Rules → Rewrite URL**, matching
+   `http.host eq "bryllup.joachimhorshauge.com"`, rewriting the path to:
+
+   ```
+   concat("/file/wedding-photos-joachim-sarah", http.request.uri.path)
+   ```
+
+   This is not optional. Backblaze serves every public bucket from the same
+   hostname, so without the rule someone can use your domain to fetch another
+   customer's bucket.
+
+Then `https://bryllup.joachimhorshauge.com/album.zip` and
+`.../photos/<name>.jpg` resolve to this bucket, which is exactly the shape the
+templates and `tools/b2 pull` build.
+
+### Records that must survive the nameserver move
+
+Mail runs through SimpleLogin on this zone. Cloudflare usually imports all of
+this, but verify each one before flipping the nameservers:
+
+| Name | Type | Value | Proxy |
+| --- | --- | --- | --- |
+| `@` | MX | `mx1.simplelogin.co` (priority 10) | n/a |
+| `@` | MX | `mx2.simplelogin.co` (priority 20) | n/a |
+| `@` | TXT | `v=spf1 include:simplelogin.co ~all` | n/a |
+| `dkim._domainkey` | CNAME | `dkim._domainkey.simplelogin.co` | **DNS only** |
+| `dkim02._domainkey` | CNAME | `dkim02._domainkey.simplelogin.co` | **DNS only** |
+| `dkim03._domainkey` | CNAME | `dkim03._domainkey.simplelogin.co` | **DNS only** |
+
+The DKIM records must stay grey-clouded: proxying a DKIM CNAME breaks signing,
+and broken signing means mail starts landing in spam.
+
+There is also a stray TXT record at the apex whose value is the literal string
+`_dmarc`, while `_dmarc.joachimhorshauge.com` has no record at all. That looks
+like a DMARC record that was created with the name in the value field, so DMARC
+is currently not configured. Unrelated to this site, but worth fixing while you
+are in the DNS anyway.
 
 ## Setup
 

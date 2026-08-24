@@ -66,6 +66,11 @@ jobs:
           key: hugo-resources-
           restore-keys: hugo-resources-
 
+      # Single source of truth is hugo.toml, so the CDN is named once.
+      - name: Read the CDN base from hugo.toml
+        id: cdn
+        run: echo "base=$(sed -n 's/^ *cdnBase *= *"\(.*\)"/\1/p' hugo.toml)" >> "$GITHUB_OUTPUT"
+
       - name: Count what the cache gave us
         id: restored
         run: echo "count=$(find content -type f -name '*.jpg' 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
@@ -74,6 +79,7 @@ jobs:
         env:
           B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
           B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
+          B2_CDN_BASE: ${{ steps.cdn.outputs.base }}
         run: go run ./tools/b2 pull
 
       # Runs even when the pull failed part-way. Downloading a photo costs
@@ -104,10 +110,31 @@ jobs:
           B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
         run: go run ./tools/b2 zip
 
+      # The download buttons are the only thing pointing at the CDN, and a
+      # hostname that does not resolve yet would make them dead links. Ask it
+      # for a photo we know exists; if it cannot serve one, this build links
+      # straight to Backblaze instead and the next build tries again.
+      - name: Check whether the CDN is serving
+        id: cdnlive
+        run: |
+          base="${{ steps.cdn.outputs.base }}"
+          first=$(find content -type f -name '*.jpg' -printf '%P\n' | sort | head -1)
+          if [ -n "$base" ] && [ -n "$first" ] \
+             && curl -fsS -I --max-time 15 "$base/$B2_PREFIX$first" > /dev/null; then
+            echo "serving from $base"
+            echo "base=$base" >> "$GITHUB_OUTPUT"
+          else
+            echo "not serving yet - downloads will point at Backblaze"
+            echo "base=" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/configure-pages@v5
         id: pages
 
       - name: Build site
+        env:
+          # Overrides params.b2.cdnBase; empty means fall back to publicBase.
+          HUGO_PARAMS_B2_CDNBASE: ${{ steps.cdnlive.outputs.base }}
         run: hugo --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
 
       - name: Save generated image sizes

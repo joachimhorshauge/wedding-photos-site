@@ -43,6 +43,7 @@ type client struct {
 	http        *http.Client
 	apiURL      string
 	downloadURL string
+	cdnBase     string
 	token       string
 	bucketID    string
 	bucketName  string
@@ -64,6 +65,7 @@ func main() {
 	cmd := os.Args[1]
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	bucket := fs.String("bucket", os.Getenv("B2_BUCKET"), "bucket name (or B2_BUCKET)")
+	cdn := fs.String("cdn", os.Getenv("B2_CDN_BASE"), "CDN base URL to download through, e.g. https://album.b-cdn.net (or B2_CDN_BASE)")
 	prefix := fs.String("prefix", envOr("B2_PREFIX", "photos/"), "key prefix holding the photos (or B2_PREFIX)")
 	dir := fs.String("dir", "content", "local directory of Hugo page resources")
 
@@ -98,6 +100,10 @@ func main() {
 	c, err := authorize(keyID, appKey, *bucket)
 	if err != nil {
 		log.Fatalf("authorize: %v", err)
+	}
+	c.cdnBase = strings.TrimSuffix(*cdn, "/")
+	if c.cdnBase != "" {
+		log.Printf("downloading through %s", c.cdnBase)
 	}
 
 	switch cmd {
@@ -481,21 +487,21 @@ func (c *client) download(f fileInfo, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	u := c.downloadURL + "/file/" + c.bucketName + "/" + urlEncodePath(f.FileName)
-	req, err := http.NewRequest(http.MethodGet, u, nil)
+
+	// Prefer the CDN. Backblaze meters downloads against a daily cap, and a
+	// build whose photo cache was lost would otherwise re-read the whole album
+	// straight from the bucket. Through a CDN the bucket is read once per
+	// photo, however many times the build repeats.
+	resp, err := c.fetchThroughCDN(f)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", c.token)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
+	if resp == nil {
+		if resp, err = c.fetchFromBucket(f); err != nil {
+			return err
+		}
 	}
 	defer resp.Body.Close()
-	if err := checkStatus(resp); err != nil {
-		return fmt.Errorf("download %s: %w", f.FileName, err)
-	}
 
 	// Write to a temporary file so an interrupted build never leaves a
 	// truncated photo that the size check would later accept as complete.
@@ -532,6 +538,53 @@ func sha1Matches(recorded, got string) bool {
 		return true
 	}
 	return strings.EqualFold(strings.TrimPrefix(recorded, "unverified:"), got)
+}
+
+// fetchThroughCDN returns nil, nil when no CDN is configured or when it did
+// not serve the file, leaving the caller to fall back to the bucket. A CDN
+// that is down should slow a build, not fail it.
+func (c *client) fetchThroughCDN(f fileInfo) (*http.Response, error) {
+	if c.cdnBase == "" {
+		return nil, nil
+	}
+	resp, err := c.http.Get(c.cdnBase + "/" + urlEncodePath(f.FileName))
+	if err != nil {
+		warnOnce(fmt.Sprintf("CDN unreachable (%v); falling back to Backblaze", err))
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		warnOnce(fmt.Sprintf("CDN returned %d for %s; falling back to Backblaze", resp.StatusCode, f.FileName))
+		return nil, nil
+	}
+	return resp, nil
+}
+
+// warnOnce reports a CDN problem the first time it happens. Every photo after
+// that would fail the same way, and one line says as much as four hundred.
+var cdnWarning sync.Once
+
+func warnOnce(msg string) {
+	cdnWarning.Do(func() { log.Printf("warning: %s", msg) })
+}
+
+func (c *client) fetchFromBucket(f fileInfo) (*http.Response, error) {
+	u := c.downloadURL + "/file/" + c.bucketName + "/" + urlEncodePath(f.FileName)
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkStatus(resp); err != nil {
+		resp.Body.Close()
+		return nil, fmt.Errorf("download %s: %w", f.FileName, err)
+	}
+	return resp, nil
 }
 
 // urlEncodePath escapes each path segment but keeps the separators intact.
