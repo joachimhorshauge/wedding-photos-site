@@ -30,11 +30,24 @@ signing and no dependencies beyond the Go standard library.
 
 Three details are worth knowing:
 
-- **Ordering.** The uploader names files by upload time in UTC
-  (`2026-08-22T15-03-08-364-a5d53c11.jpg`), so sorting by filename is
-  chronological, and the caption under each photo is that timestamp shifted to
-  local time (`params.photoUTCOffset`). EXIF dates would be better, but the
-  uploader does not preserve them.
+- **Ordering: by upload, not by capture.** The uploader names files by upload
+  time in UTC (`2026-08-22T15-03-08-364-a5d53c11.jpg`), so sorting by filename
+  is chronological in the order guests *shared* photos, and the caption under
+  each photo is that timestamp shifted to local time (`params.photoUTCOffset`).
+
+  Sorting by when a photo was actually taken is not possible, and it is worth
+  writing down why so nobody goes looking again: the uploader resizes each
+  photo with `canvas.toBlob()`, and a canvas re-encode drops EXIF. Across all
+  381 photos the only tags that survive are `ColorSpace`, `ExifImageWidth` and
+  `ExifImageHeight` - no `DateTimeOriginal`, no camera make or model. The B2
+  objects carry no custom metadata either. The capture time is simply not
+  recorded anywhere.
+
+  The practical effect is that a guest who uploads two days late lands at the
+  end of the album rather than beside the moment they photographed. Fixing it
+  means changing the uploader - either preserving the EXIF block through the
+  resize, or sending `File.lastModified` - and would only help photos uploaded
+  after that change.
 - **HEIC.** Four photos came off iPhones as HEIC, which Hugo cannot resize -
   and which browsers other than Safari cannot display either, so the slideshow
   on the upload site could not show them. They have been converted and replaced
