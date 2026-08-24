@@ -1,0 +1,199 @@
+/* Beige wedding palette and typography.
+ *
+ * The theme imports this file last, as plain CSS (no Sass nesting available).
+ * It defines the palette by overriding the theme's own light/dark tokens, so
+ * every component the theme styles follows along without being restyled here.
+ */
+
+:root {
+  /* Warm ivory paper, deep cocoa ink, antique-gold accent. */
+  --surface-1-light: #fbf6ee;
+  --surface-2-light: #efe4d3;
+  --text-1-light: #3a322a;
+  --text-2-light: #8c7b66;
+  --border-light: #e2d6c1;
+
+  --surface-1-dark: #211c17;
+  --surface-2-dark: #3a322a;
+  --text-1-dark: #f5efe4;
+  --text-2-dark: #b3a48d;
+  --border-dark: #514639;
+
+  --accent: #a98e63;
+  --accent-soft: #d9c7a3;
+
+  --font-display: "Cormorant Garamond", "Iowan Old Style", Georgia, serif;
+  --font-body: "Karla", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* A warm charcoal behind the lightbox reads softer than pure black. */
+  --pswp-bg: #211c17;
+  --pswp-placeholder-bg: #3a322a;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  letter-spacing: 0.01em;
+}
+
+h1,
+h2,
+h3,
+hgroup h1,
+hgroup h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.015em;
+}
+
+/* The site title in the header, on pages that show it. */
+body > header .btn {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.5rem;
+  letter-spacing: 0.06em;
+}
+
+/* ---- Hero ---------------------------------------------------------------- */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  margin: 0 auto 3.5rem;
+  padding: 3rem 1.5rem 0;
+  max-width: 48rem;
+  text-align: center;
+}
+
+.hero-date {
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(3rem, 11vw, 5.5rem);
+  font-weight: 300;
+  line-height: 1.05;
+  text-wrap: balance;
+}
+
+.hero-rule {
+  color: var(--accent);
+  line-height: 0;
+}
+
+.hero-lede {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--text-2);
+  font-family: var(--font-display);
+  font-size: 1.375rem;
+  font-style: italic;
+  line-height: 1.5;
+  text-wrap: balance;
+}
+
+.hero-prose {
+  max-width: 34rem;
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+@media (min-width: 640px) {
+  .hero {
+    gap: 1.5rem;
+    padding-top: 4.5rem;
+    margin-bottom: 4.5rem;
+  }
+}
+
+/* ---- Download everything -------------------------------------------------- */
+
+.btn-download-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-top: 0.75rem;
+  border: 1px solid var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.75rem 1.5rem;
+  color: var(--text-1);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  transition: background-color 200ms, border-color 200ms, color 200ms;
+}
+
+.btn-download-all:hover,
+.btn-download-all:focus-visible {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: #fbf6ee;
+}
+
+.btn-download-all svg {
+  flex: none;
+}
+
+.btn-meta {
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.btn-download-all:hover .btn-meta,
+.btn-download-all:focus-visible .btn-meta {
+  color: #f0e6d5;
+}
+
+/* ---- Gallery -------------------------------------------------------------- */
+
+.gallery-item figure {
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.gallery-item img {
+  transition: transform 400ms ease, filter 400ms ease;
+}
+
+.gallery-item:hover img {
+  transform: scale(1.02);
+  filter: brightness(1.04);
+}
+
+/* Read by the PhotoSwipe caption plugin, never shown in the grid itself. */
+.pswp-caption-content {
+  display: none;
+}
+
+.pswp__dynamic-caption {
+  color: var(--accent-soft);
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+/* The download button waits on a fetch of the full-size original. */
+.pswp__button--download-button.is-busy {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ---- Footer --------------------------------------------------------------- */
+
+body > footer {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-style: italic;
+  letter-spacing: 0.03em;
+}

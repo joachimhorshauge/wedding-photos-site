@@ -1,0 +1,101 @@
+{{/* Forked from hugo-theme-gallery v4.9.3 (layouts/partials/gallery.html).
+     Two changes, both about photos that live in Backblaze rather than in git:
+
+       1. every tile carries data-original / data-filename, so the lightbox's
+          download button can hand over the full-size file from the bucket
+          instead of the 1600px copy the theme publishes;
+       2. tiles get a date caption, because these filenames are upload
+          timestamps and nobody wrote titles for 334 photos.
+
+     Diff against the theme file when bumping the submodule. */}}
+
+{{ $b2 := site.Params.b2 }}
+{{/* Bucket key for this page's photos: the prefix, plus the album
+     subdirectory when the photos are not the home page's own. */}}
+{{ $keyPrefix := $b2.prefix }}
+{{ with .File }}
+  {{ $dir := path.Dir .Path }}
+  {{ if and $dir (ne $dir ".") }}
+    {{ $keyPrefix = printf "%s%s/" $b2.prefix $dir }}
+  {{ end }}
+{{ end }}
+
+<section class="gallery">
+  <div id="gallery" style="visibility: hidden; height: 1px; overflow: hidden">
+    {{ $images := slice }}
+    {{ range $image := where (.Resources.ByType "image") "Params.hidden" "ne" true }}
+      {{ $title := "" }}
+      {{ $date := "" }}
+      {{ with $image.Exif }}
+        {{ $date = .Date }}
+        {{ with .Tags.ImageDescription }}
+          {{/* Title from EXIF ImageDescription */}}
+          {{ $title = . }}
+        {{ end }}
+      {{ end }}
+      {{ if ne $image.Title $image.Name }}
+        {{/* Title from front matter */}}
+        {{ $title = $image.Title }}
+      {{ end }}
+      {{ if $image.Params.Date }}
+        {{/* Date from front matter */}}
+        {{ $date = time $image.Params.Date }}
+      {{ end }}
+      {{ if not $date }}
+        {{/* No EXIF: fall back to the upload timestamp in the filename,
+             2026-08-22T15-03-08-364-<random>.jpg, which the uploader writes
+             in UTC. photoUTCOffset turns it back into local wall-clock time. */}}
+        {{ $stem := replace $image.Name (path.Ext $image.Name) "" }}
+        {{ if findRE `^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}` $stem }}
+          {{ $clock := replace (substr $stem 11 8) "-" ":" }}
+          {{ $date = time.AsTime (printf "%sT%s%s" (substr $stem 0 10) $clock site.Params.photoUTCOffset) }}
+        {{ end }}
+      {{ end }}
+      {{ $images = $images | append (dict
+        "Name" $image.Name
+        "Title" $title
+        "Date" $date
+        "image" $image
+        "Params" $image.Params
+        )
+      }}
+    {{ end }}
+    {{ $publishResources := default true .Params.build.publishResources }}
+    {{ range sort $images (.Params.sort_by | default "Name") (.Params.sort_order | default "asc") }}
+      {{ $image := .image }}
+      {{ $thumbnail := $image.Filter (slice images.AutoOrient (images.Process "fit 600x600")) }}
+      {{ $full := $image.Filter (slice images.AutoOrient (images.Process "fit 1600x1600")) }}
+      {{ $color := index $thumbnail.Colors 0 | default "transparent" }}
+
+      {{/* Caption: a written title if there is one, otherwise when it was taken. */}}
+      {{ $when := "" }}
+      {{ with .Date }}
+        {{ $when = time.Format "2. January kl. 15:04" . }}
+      {{ end }}
+      {{ $caption := .Title | default $when }}
+      {{ $alt := $caption | default "Bryllupsfoto" }}
+
+      {{/* Full-size file in the bucket, and a filename worth saving as. */}}
+      {{ $original := printf "%s/%s%s" (strings.TrimSuffix "/" $b2.publicBase) $keyPrefix .Name }}
+      {{ $saveAs := .Name }}
+      {{ with .Date }}
+        {{ $saveAs = printf "%s-%s%s" (urlize site.Params.coupleNames) (time.Format "2006-01-02-150405" .) (path.Ext $image.Name) }}
+      {{ end }}
+
+      <a class="gallery-item" href="{{ if $publishResources }}{{ $image.RelPermalink }}{{ else }}{{ $full.RelPermalink }}{{ end }}" data-pswp-src="{{ $full.RelPermalink }}" data-pswp-width="{{ $full.Width }}" data-pswp-height="{{ $full.Height }}" data-pswp-target="{{ $image.Name | urlize }}" data-original="{{ $original }}" data-filename="{{ $saveAs }}" title="{{ $caption }}" itemscope itemtype="https://schema.org/ImageObject" style="aspect-ratio: {{ $thumbnail.Width }} / {{ $thumbnail.Height }}">
+        <figure style="background-color: {{ $color }}; aspect-ratio: {{ $thumbnail.Width }} / {{ $thumbnail.Height }}">
+          <img class="lazyload" width="{{ $thumbnail.Width }}" height="{{ $thumbnail.Height }}" data-src="{{ $thumbnail.RelPermalink }}" alt="{{ $alt }}" />
+        </figure>
+        {{ with $caption }}
+          <span class="pswp-caption-content">{{ . }}</span>
+        {{ end }}
+        <meta itemprop="contentUrl" content="{{ $original }}" />
+        {{ with site.Params.Author }}
+          <span itemprop="creator" itemtype="https://schema.org/Person" itemscope>
+            <meta itemprop="name" content="{{ site.Params.Author.name }}" />
+          </span>
+        {{ end }}
+      </a>
+    {{ end }}
+  </div>
+</section>

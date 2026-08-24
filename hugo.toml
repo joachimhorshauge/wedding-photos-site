@@ -1,0 +1,57 @@
+# Local/default baseURL. The GitHub Actions build overrides this with the real
+# Pages URL (see .github/workflows/deploy.yml).
+baseURL = "https://joachimhorshauge.github.io/wedding-photos-site/"
+languageCode = "da-DK"
+title = "Joachim & Sarah"
+copyright = "Joachim & Sarah · 22. august 2026"
+enableRobotsTXT = true
+timeZone = "Europe/Copenhagen"
+
+# 334 photos at 2560px means a lot of resizing on a cold cache. The default
+# 30s per-page timeout is not enough; a warm cache finishes in seconds.
+timeout = "20m"
+
+# One chronological album, no tags or feeds to go stale.
+disableKinds = ["taxonomy", "term", "rss"]
+
+[params]
+  defaultTheme = "light"
+  description = "Billeder fra vores bryllup, 22. august 2026."
+
+  # ---- wording -------------------------------------------------------------
+  coupleNames = "Joachim & Sarah"
+  eventDate = "22. august 2026"
+
+  # Photos without EXIF fall back to the upload timestamp in their filename,
+  # which the uploader writes in UTC. The album spans one August weekend, so a
+  # single offset (CEST) is enough to show local wall-clock time.
+  photoUTCOffset = "+02:00"
+
+  # ---- Backblaze -----------------------------------------------------------
+  # Where the browser fetches full-size originals and the album archive. The
+  # bucket is public-read, so these URLs need no credentials; only listing the
+  # bucket does, and that happens at build time.
+  [params.b2]
+    publicBase = "https://s3.eu-central-003.backblazeb2.com/wedding-photos-joachim-sarah"
+    # Key prefix the photos live under, mirrored into content/ by `tools/b2 pull`.
+    prefix = "photos/"
+    # Archive built and uploaded by `tools/b2 zip`, linked by the download-all button.
+    zipKey = "album.zip"
+
+  [params.gallery]
+    boxSpacing = 10
+    targetRowHeight = 280
+
+[imaging]
+  quality = 82
+  resampleFilter = "CatmullRom"
+  [imaging.exif]
+    disableDate = false
+    disableLatLong = true
+    includeFields = "ImageDescription|Orientation|DateTimeOriginal"
+
+[markup.goldmark.renderer]
+  unsafe = true
+
+[minify]
+  disableJS = true # already bundled and minified by js.Build
