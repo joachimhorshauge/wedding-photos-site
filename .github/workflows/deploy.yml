@@ -66,18 +66,37 @@ jobs:
           key: hugo-resources-
           restore-keys: hugo-resources-
 
+      - name: Count what the cache gave us
+        id: restored
+        run: echo "count=$(find content -type f -name '*.jpg' 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
+
       - name: Pull photos from Backblaze
         env:
           B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
           B2_APP_KEY: ${{ secrets.B2_APP_KEY }}
         run: go run ./tools/b2 pull
 
+      # Runs even when the pull failed part-way. Downloading a photo costs
+      # Backblaze bandwidth against a daily cap, so a half-finished mirror is
+      # worth keeping: the next attempt resumes instead of starting over.
       - name: Identify the album
         id: album
+        if: always()
         run: |
-          # Names the cache entries after the photo set itself.
+          # Names the cache entries after the photos actually on disk.
           hash=$(find content -type f -name '*.jpg' -printf '%P %s\n' | sort | sha256sum | cut -c1-16)
           echo "hash=$hash" >> "$GITHUB_OUTPUT"
+          echo "count=$(find content -type f -name '*.jpg' | wc -l)" >> "$GITHUB_OUTPUT"
+
+      # Only when this run actually added photos. Restores match on the
+      # `photos-` prefix and take the newest entry, so saving a set no larger
+      # than the one we restored would shadow a better cache with a worse one.
+      - name: Save photos
+        if: ${{ always() && fromJSON(steps.album.outputs.count) > fromJSON(steps.restored.outputs.count) }}
+        uses: actions/cache/save@v4
+        with:
+          path: content
+          key: photos-${{ steps.album.outputs.hash }}
 
       - name: Build the download-everything archive
         env:
@@ -90,12 +109,6 @@ jobs:
 
       - name: Build site
         run: hugo --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
-
-      - name: Save photos
-        uses: actions/cache/save@v4
-        with:
-          path: content
-          key: photos-${{ steps.album.outputs.hash }}
 
       - name: Save generated image sizes
         uses: actions/cache/save@v4
